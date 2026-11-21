@@ -91,6 +91,9 @@ def _store_fields(s: Store) -> dict:
         accepts_card=s.accepts_card,
         accepts_breb=s.accepts_breb,
         phone=s.phone,
+        address=s.address or "",
+        latitude=s.latitude,
+        longitude=s.longitude,
     )
 
 

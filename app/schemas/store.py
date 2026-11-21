@@ -3,20 +3,55 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import Field, HttpUrl, field_validator
+from pydantic import Field, HttpUrl, field_validator, model_validator
 
 from app.models.enums import DocumentStatus, StoreStatus
 from app.schemas.common import CamelModel, InputModel
 
+PLACE_KINDS = "building|delivery|entrance|food|parking|service|sports|other"
+
 
 class CampusPlaceOut(CamelModel):
+    """Pin del mapa. `kind`: building, delivery, entrance, food, parking, service, sports u other."""
+
     id: str
     name: str
     hint: str
+    description: str = ""
+    kind: str = "building"
+    is_delivery_point: bool = True
     x: float
     y: float
     latitude: float | None
     longitude: float | None
+
+
+class PlaceAdminOut(CampusPlaceOut):
+    is_active: bool
+
+
+class PlaceIn(InputModel):
+    """Crear un pin (admin). Las coordenadas son obligatorias."""
+
+    name: str = Field(min_length=2, max_length=80)
+    hint: str = Field("", max_length=120)
+    description: str = Field("", max_length=500)
+    kind: str = Field("building", pattern=f"^({PLACE_KINDS})$")
+    is_delivery_point: bool = False
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    is_active: bool = True
+
+
+class PlaceUpdateIn(InputModel):
+    name: str | None = Field(None, min_length=2, max_length=80)
+    hint: str | None = Field(None, max_length=120)
+    description: str | None = Field(None, max_length=500)
+    kind: str | None = Field(None, pattern=f"^({PLACE_KINDS})$")
+    is_delivery_point: bool | None = None
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    is_active: bool | None = None
 
 
 # Llave Bre-B: @alias, celular, correo o número de documento (vacío para quitarla)
@@ -48,6 +83,17 @@ class StoreSettingsFields(InputModel):
     nequi_phone: str | None = Field(None, pattern=r"^(3\d{9})?$")
     breb_key: str | None = Field(None, max_length=60, pattern=BREB_KEY_PATTERN)
     phone: str | None = Field(None, max_length=20)
+    # Local físico: dirección y ubicación. Enviar latitude/longitude en null lo quita.
+    address: str | None = Field(None, max_length=200)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def _location_pair(self):
+        sent = {"latitude", "longitude"} & self.model_fields_set
+        if sent and (len(sent) == 1 or (self.latitude is None) != (self.longitude is None)):
+            raise ValueError("Envía latitud y longitud juntas")
+        return self
 
 
 class StoreCreateIn(StoreSettingsFields):
@@ -88,6 +134,9 @@ class StoreSettingsOut(CamelModel):
     accepts_card: bool
     accepts_breb: bool
     phone: str
+    address: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class StoreOut(StoreSettingsOut):

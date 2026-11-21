@@ -27,13 +27,20 @@ if TYPE_CHECKING:
 
 
 class CampusPlace(Base):
-    """Punto del campus (Bloque 8, Biblioteca…). x/y van de 0 a 1 en el mapa ilustrado."""
+    """Pin del mapa que administra el admin (Bloque 8, Biblioteca, entrada…).
+
+    Con `is_delivery_point` el lugar sirve para entregar y recoger pedidos; si no,
+    es solo una guía en el mapa. x/y son del mapa ilustrado anterior.
+    """
 
     __tablename__ = "campus_places"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
     hint: Mapped[str] = mapped_column(String(120), default="")
+    description: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(20), default="building", server_default="building")
+    is_delivery_point: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     x: Mapped[float] = mapped_column(Float, default=0.5)
     y: Mapped[float] = mapped_column(Float, default=0.5)
     latitude: Mapped[float | None] = mapped_column(Float)
@@ -79,6 +86,11 @@ class Store(UUIDPk, Timestamps, Base):
     nequi_phone: Mapped[str] = mapped_column(String(20), default="", server_default="")
     breb_key: Mapped[str] = mapped_column(String(60), default="", server_default="")
     phone: Mapped[str] = mapped_column(String(20), default="")
+
+    # Local físico (opcional): dirección y ubicación en el mapa
+    address: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
 
     # Calificación agregada (se recalcula con cada reseña)
     rating_avg: Mapped[float] = mapped_column(Float, default=0)

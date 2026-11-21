@@ -64,8 +64,12 @@ class CatalogService:
         return [mappers.CampusPlaceOut.model_validate(p) for p in CampusRepo(self.db).all_active()]
 
     def _check_place(self, place_id: str | None) -> None:
-        if place_id and not self.db.get(CampusPlace, place_id):
-            raise BusinessRuleError("El lugar del campus no existe", code="invalid_place")
+        """Solo los pines activos marcados como punto de entrega sirven para pedidos."""
+        if not place_id:
+            return
+        place = self.db.get(CampusPlace, place_id)
+        if not place or not place.is_active or not place.is_delivery_point:
+            raise BusinessRuleError("Ese lugar no está disponible para entregas", code="invalid_place")
 
     # ------------------------------------------------------------------ tiendas
     def list_stores(self, *, q, category, open_only, page: PageParams) -> Page:
@@ -121,7 +125,7 @@ class CatalogService:
         if changes.get("image_url"):
             validate_media_url(changes["image_url"], "store", user.id)
         for k, v in changes.items():
-            if v is not None or k == "pickup_place_id":
+            if v is not None or k in ("pickup_place_id", "latitude", "longitude"):
                 setattr(store, k, v)
         if not store.allows_delivery and not store.allows_pickup:
             raise BusinessRuleError("Activa al menos domicilio o recogida", code="no_fulfillment")

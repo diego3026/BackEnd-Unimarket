@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import DB, Admin, Paging
 from app.models.enums import StoreStatus, UserRole, UserStatus
@@ -20,8 +20,8 @@ from app.schemas.admin import (
 from app.schemas.auth import UserOut
 from app.schemas.common import Page
 from app.schemas.product import ProductAdminOut
-from app.schemas.store import StoreAdminOut, StoreDocumentOut
-from app.services.admin import AdminService
+from app.schemas.store import PlaceAdminOut, PlaceIn, PlaceUpdateIn, StoreAdminOut, StoreDocumentOut
+from app.services.admin import AdminService, PlacesAdmin
 
 router = APIRouter(prefix="/admin", tags=["Administrador"])
 
@@ -96,3 +96,27 @@ def moderate(product_id: uuid.UUID, data: ProductModerationIn, admin: Admin, db:
 @router.get("/reports", response_model=ReportOut)
 def reports(admin: Admin, db: DB, days: Annotated[int, Query(ge=1, le=365)] = 30):
     return AdminService(db, admin).report(days)
+
+
+# ------------------------------------------------------------------ pines del mapa
+@router.get("/places", response_model=list[PlaceAdminOut])
+def places(admin: Admin, db: DB):
+    """Todos los pines, incluidos los desactivados."""
+    return PlacesAdmin(db, admin).list()
+
+
+@router.post("/places", response_model=PlaceAdminOut, status_code=status.HTTP_201_CREATED)
+def create_place(data: PlaceIn, admin: Admin, db: DB):
+    """Nuevo pin. Con `isDeliveryPoint` sirve para entregar y recoger pedidos."""
+    return PlacesAdmin(db, admin).create(data)
+
+
+@router.patch("/places/{place_id}", response_model=PlaceAdminOut)
+def update_place(place_id: str, data: PlaceUpdateIn, admin: Admin, db: DB):
+    return PlacesAdmin(db, admin).update(place_id, data)
+
+
+@router.delete("/places/{place_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_place(place_id: str, admin: Admin, db: DB):
+    """Desactiva el pin (los pedidos antiguos lo siguen mostrando)."""
+    PlacesAdmin(db, admin).delete(place_id)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import secrets
+import unicodedata
 import uuid
 from datetime import timedelta
 
@@ -9,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import BusinessRuleError, NotFound
-from app.models import AuditLog, Order, Product, Store, StoreDocument, User
+from app.models import AuditLog, CampusPlace, Order, Product, Store, StoreDocument, User
 from app.models.enums import OrderStatus, StoreStatus, UserRole, UserStatus
 from app.repositories.repos import ProductRepo, StoreRepo, TokenRepo, UserRepo, _escape_like
 from app.schemas.admin import (
@@ -20,6 +23,7 @@ from app.schemas.admin import (
     StoreReviewIn,
 )
 from app.schemas.common import Page, PageParams
+from app.schemas.store import PlaceAdminOut, PlaceIn, PlaceUpdateIn
 from app.services import mappers
 from app.services.media import private_download_url
 from app.services.notifications import notify
@@ -227,3 +231,59 @@ class AdminService:
             from_date=since,
             to_date=to_date,
         )
+
+
+def _slug(name: str) -> str:
+    text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    base = re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:22] or "pin"
+    return f"{base}-{secrets.token_hex(3)}"
+
+
+class PlacesAdmin:
+    """Pines del mapa: los crea el admin para guiar a clientes y emprendedores."""
+
+    def __init__(self, db: Session, actor: User):
+        self.db = db
+        self.actor = actor
+
+    def _get(self, place_id: str) -> CampusPlace:
+        place = self.db.get(CampusPlace, place_id)
+        if not place:
+            raise NotFound("Pin no encontrado", code="place_not_found")
+        return place
+
+    def _audit(self, action: str, place: CampusPlace) -> None:
+        AdminService(self.db, self.actor)._audit(action, "place", place.id, place.name)
+
+    def list(self) -> list[PlaceAdminOut]:
+        rows = self.db.scalars(select(CampusPlace).order_by(CampusPlace.is_active.desc(), CampusPlace.name))
+        return [PlaceAdminOut.model_validate(p) for p in rows]
+
+    def create(self, data: PlaceIn) -> PlaceAdminOut:
+        place = CampusPlace(id=_slug(data.name), **data.model_dump())
+        self.db.add(place)
+        self._audit("place.create", place)
+        self.db.commit()
+        return PlaceAdminOut.model_validate(place)
+
+    def update(self, place_id: str, data: PlaceUpdateIn) -> PlaceAdminOut:
+        place = self._get(place_id)
+        for k, v in data.model_dump(exclude_unset=True).items():
+            if v is not None:
+                setattr(place, k, v)
+        self._audit("place.update", place)
+        self.db.commit()
+        return PlaceAdminOut.model_validate(place)
+
+    def delete(self, place_id: str) -> None:
+        """Los pedidos guardan el lugar, así que no se borra: se desactiva."""
+        place = self._get(place_id)
+        in_use = self.db.scalar(select(func.count()).select_from(Store).where(Store.pickup_place_id == place.id))
+        if in_use:
+            raise BusinessRuleError(
+                f"{in_use} tienda(s) lo usan como punto de recogida; pídeles cambiarlo primero",
+                code="place_in_use",
+            )
+        place.is_active = False
+        self._audit("place.delete", place)
+        self.db.commit()
