@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from collections.abc import Callable
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, Query, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, Query, Request, Security
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import Forbidden, Unauthorized
 from app.core.security import decode_access_token
 from app.db.session import get_db
@@ -21,6 +23,26 @@ from app.schemas.common import PageParams
 bearer = HTTPBearer(auto_error=False, description="Access token del login")
 
 DB = Annotated[Session, Depends(get_db)]
+
+app_key_scheme = APIKeyHeader(
+    name="X-App-Key",
+    auto_error=False,
+    description="Clave de la app UniMarket (la app la envía siempre)",
+)
+
+
+def require_app_key(key: Annotated[str | None, Security(app_key_scheme)] = None) -> None:
+    """Solo la app (o quien tenga la clave) puede usar la API.
+
+    La clave viaja dentro de la app, así que no es un secreto perfecto: frena bots,
+    escáneres y uso casual. La protección real de los datos son el login, los roles
+    y la verificación de propietario en cada endpoint.
+    """
+    keys = settings.app_key_list
+    if not keys:
+        return
+    if key is None or not any(hmac.compare_digest(key.encode(), k.encode()) for k in keys):
+        raise Forbidden("Cliente no autorizado", code="client_not_allowed")
 
 
 def get_current_user(

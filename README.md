@@ -69,6 +69,10 @@ Los endpoints no tocan la BD y los repositorios no deciden reglas; así cada cap
 - Errores internos nunca se envían al cliente; cada respuesta lleva `X-Request-ID` para rastrear en los logs.
 - Bitácora (`audit_logs`) de acciones del administrador.
 - En producción la app **no arranca** sin `SECRET_KEY` y `DATA_ENCRYPTION_KEY`.
+- **Clave de app** (`APP_CLIENT_KEYS`): toda la API exige la cabecera `X-App-Key`. Frena bots y escáneres; la seguridad de los datos sigue siendo el login.
+- **Bloqueo de cuenta**: 5 intentos fallidos bloquean el login de esa cuenta 15 minutos (recuperar la contraseña la desbloquea).
+- `/docs` en producción pide usuario y clave (`DOCS_USERNAME`/`DOCS_PASSWORD`); sin ellos no existe. La raíz `/` no revela nada y no se envía la cabecera `Server`.
+- Peticiones de más de 1 MB se rechazan (413). Los endpoints de investigación están apagados por defecto.
 
 ---
 

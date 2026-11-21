@@ -32,6 +32,9 @@ class User(UUIDPk, Timestamps, Base):
     # Se incrementa al cambiar la contraseña o al suspender: invalida todos los tokens.
     token_version: Mapped[int] = mapped_column(Integer, default=0)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Bloqueo temporal tras varios intentos fallidos de login
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     store: Mapped[Store | None] = relationship(back_populates="owner", uselist=False)
 

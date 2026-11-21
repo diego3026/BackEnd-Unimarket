@@ -21,5 +21,6 @@ ENV PORT=8000 \
     RESEARCH_STATE_PATH=/tmp/research_state.sqlite3
 EXPOSE 8000
 
-# Railway inyecta $PORT. Las migraciones corren en preDeployCommand (railway.json).
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*' --workers ${WEB_CONCURRENCY:-2}"]
+# Railway inyecta $PORT. Las migraciones se aplican antes de arrancar (son idempotentes:
+# si ya están al día no hacen nada). railway.json también las corre en preDeployCommand.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*' --no-server-header --workers ${WEB_CONCURRENCY:-2}"]
