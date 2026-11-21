@@ -49,6 +49,11 @@ class Conflict(AppError):
     code = "conflict"
 
 
+class TooManyAttempts(AppError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "rate_limited"
+
+
 class BusinessRuleError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "business_rule"

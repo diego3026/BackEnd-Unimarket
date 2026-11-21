@@ -46,12 +46,23 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     allowed_hosts: str = "*"
     enable_docs: bool = True
+    # En producción /docs pide usuario y clave (HTTP Basic). Sin ellos, /docs no existe.
+    docs_username: str = ""
+    docs_password: str = ""
+    # Claves que la app envía en la cabecera X-App-Key (separadas por coma).
+    # Vacío = no se exige. Filtra bots y escáneres; la seguridad real sigue siendo el login.
+    app_client_keys: str = ""
+    max_body_bytes: int = 1_048_576
+    # Bloqueo por intentos fallidos de login en una misma cuenta
+    max_failed_logins: int = 5
+    lockout_minutes: int = 15
 
     # --- Negocio -----------------------------------------------------------
     # Si es True las tiendas nuevas quedan aprobadas sin revisión del admin.
     auto_approve_stores: bool = False
     # Expone los endpoints del proyecto de investigación (MOTOA/JROF) en /research.
-    enable_research_api: bool = True
+    # No tienen autenticación: apagados por defecto, actívalos solo para demos.
+    enable_research_api: bool = False
 
     # --- Correo ------------------------------------------------------------
     # Railway (plan Hobby) bloquea SMTP: se envía por API HTTPS.
@@ -118,6 +129,16 @@ class Settings(BaseSettings):
             # Railway revisa /health con este Host; sin él el despliegue nunca queda "sano".
             hosts += ["healthcheck.railway.app", "localhost", "127.0.0.1"]
         return hosts
+
+    @property
+    def app_key_list(self) -> list[str]:
+        return [k.strip() for k in self.app_client_keys.split(",") if k.strip()]
+
+    @property
+    def docs_available(self) -> bool:
+        if not self.enable_docs:
+            return False
+        return not self.is_production or bool(self.docs_username and self.docs_password)
 
     @property
     def media_enabled(self) -> bool:

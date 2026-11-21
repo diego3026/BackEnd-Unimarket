@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.errors import Conflict, Forbidden, Unauthorized
+from app.core.errors import Conflict, Forbidden, TooManyAttempts, Unauthorized
 from app.core.security import (
     DUMMY_HASH,
     codes_match,
@@ -82,12 +82,26 @@ class AuthService:
         if user is None:
             verify_password(data.password, DUMMY_HASH)  # mismo tiempo de respuesta
             raise Unauthorized(INVALID_CREDENTIALS, code="invalid_credentials")
+        current = now()
+        if user.locked_until and _aware(user.locked_until) > current:
+            minutes = max(1, int((_aware(user.locked_until) - current).total_seconds() // 60) + 1)
+            raise TooManyAttempts(
+                f"Demasiados intentos fallidos. Intenta de nuevo en {minutes} min o recupera tu contraseña.",
+                code="account_locked",
+            )
         if not verify_password(data.password, user.password_hash):
-            logger.info("Intento de login fallido para user=%s", user.id)
+            user.failed_logins += 1
+            if user.failed_logins >= settings.max_failed_logins:
+                user.locked_until = current + timedelta(minutes=settings.lockout_minutes)
+                user.failed_logins = 0
+                logger.warning("Cuenta bloqueada temporalmente por intentos fallidos user=%s", user.id)
+            self.db.commit()
             raise Unauthorized(INVALID_CREDENTIALS, code="invalid_credentials")
         if user.status != UserStatus.active:
             raise Forbidden("Tu cuenta está suspendida. Escríbenos a soporte.", code="account_suspended")
-        user.last_login_at = now()
+        user.failed_logins = 0
+        user.locked_until = None
+        user.last_login_at = current
         pair = self._issue(user, user_agent=user_agent)
         self.db.commit()
         return pair
@@ -172,6 +186,8 @@ class AuthService:
         self._consume_code(user, TokenPurpose.reset_password, data.code)
         user.password_hash = hash_password(data.new_password)
         user.token_version += 1
+        user.failed_logins = 0
+        user.locked_until = None  # recuperar la contraseña desbloquea la cuenta
         self.tokens.revoke_user(user.id, now())
         self.db.commit()
 
