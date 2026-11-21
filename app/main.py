@@ -98,15 +98,21 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["Sistema"])
     def health():
         """Listo para atender: verifica la conexión con PostgreSQL (lo usa Railway)."""
+        schema = None
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+                try:
+                    schema = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+                except Exception:
+                    schema = None  # tablas sin crear: faltan las migraciones
             db_ok = True
         except Exception:
             db_ok = False
+        ok = db_ok and schema is not None
         return JSONResponse(
-            status_code=200 if db_ok else 503,
-            content={"status": "ok" if db_ok else "degraded", "database": db_ok},
+            status_code=200 if ok else 503,
+            content={"status": "ok" if ok else "degraded", "database": db_ok, "schema": schema},
         )
 
     @app.get("/", include_in_schema=False)
