@@ -113,7 +113,11 @@ class Settings(BaseSettings):
 
     @property
     def allowed_host_list(self) -> list[str]:
-        return [h.strip() for h in self.allowed_hosts.split(",") if h.strip()] or ["*"]
+        hosts = [h.strip() for h in self.allowed_hosts.split(",") if h.strip()] or ["*"]
+        if "*" not in hosts:
+            # Railway revisa /health con este Host; sin él el despliegue nunca queda "sano".
+            hosts += ["healthcheck.railway.app", "localhost", "127.0.0.1"]
+        return hosts
 
     @property
     def media_enabled(self) -> bool:
