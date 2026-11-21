@@ -284,3 +284,87 @@ def test_concurrent_orders_never_oversell(client, seller):
     assert codes.count(422) == 5
     mine = {p["name"]: p for p in client.get("/api/v1/seller/products", headers=seller["headers"]).json()}
     assert mine["Sándwich Clásico"]["stock"] == 0
+
+
+def test_breb_transfer_flow(client, seller, customer):
+    r = _order(client, customer, seller, paymentKind="breb")
+    assert r.status_code == 201, r.text
+    order = r.json()
+    # El cliente ve a dónde transferir; la tienda no necesita verlo.
+    assert order["payTo"]["key"] == "@ottosandwich"
+    assert order["payTo"]["amount"] == order["total"]
+    assert order["paymentStatus"] == "pending"
+
+    r = client.post(f"/api/v1/orders/{order['id']}/payment-report", headers=customer, json={"reference": "M12345"})
+    assert r.status_code == 200 and r.json()["paymentStatus"] == "reported"
+    assert r.json()["payTo"] is None
+    assert client.post(f"/api/v1/orders/{order['id']}/payment-report", headers=customer, json={}).status_code == 422
+
+    h = seller["headers"]
+    seen = client.get("/api/v1/seller/orders", headers=h).json()["items"][0]
+    assert seen["paymentReference"] == "M12345" and seen["payTo"] is None
+    r = client.post(f"/api/v1/seller/orders/{order['id']}/payment-confirm", headers=h, json={"received": True})
+    assert r.status_code == 200 and r.json()["paymentStatus"] == "paid"
+    # Otro cliente no puede confirmar ni reportar
+    other = auth(register(client, email="otro2@test.co", phone="3004445566"))
+    assert client.post(f"/api/v1/orders/{order['id']}/payment-report", headers=other, json={}).status_code == 404
+
+
+def test_payment_methods_must_be_configured(client, seller, customer):
+    # Nequi no está configurado y tarjeta no tiene pasarela.
+    assert _order(client, customer, seller, paymentKind="nequi").json()["error"]["code"] == "payment_not_accepted"
+    h = seller["headers"]
+    r = client.patch("/api/v1/seller/store", headers=h, json={"acceptsNequi": True, "nequiPhone": ""})
+    assert r.json()["error"]["code"] == "missing_nequi"
+    r = client.patch("/api/v1/seller/store", headers=h, json={"acceptsCard": True})
+    assert r.json()["error"]["code"] == "card_unavailable"
+    client.patch("/api/v1/seller/store", headers=h, json={"acceptsNequi": True, "nequiPhone": "3001234567"})
+    assert _order(client, customer, seller, paymentKind="nequi").status_code == 201
+
+
+def test_http_cache_and_etag(client, seller, customer):
+    r = client.get("/api/v1/products")
+    assert r.headers["Cache-Control"].startswith("public")
+    etag = r.headers["ETag"]
+    assert client.get("/api/v1/products", headers={"If-None-Match": etag}).status_code == 304
+    order = _order(client, customer, seller).json()
+    r = client.get(f"/api/v1/orders/{order['id']}", headers=customer)
+    assert r.headers["Cache-Control"] == "private, no-cache"
+    again = client.get(f"/api/v1/orders/{order['id']}", headers={**customer, "If-None-Match": r.headers["ETag"]})
+    assert again.status_code == 304
+    client.post(f"/api/v1/seller/orders/{order['id']}/status", headers=seller["headers"], json={"status": "preparing"})
+    changed = client.get(f"/api/v1/orders/{order['id']}", headers={**customer, "If-None-Match": r.headers["ETag"]})
+    assert changed.status_code == 200 and changed.json()["status"] == "preparing"
+    assert client.post("/api/v1/orders/quote", headers=customer, json={}).headers["Cache-Control"] == "no-store"
+
+
+def test_signed_uploads_and_url_validation(client, seller, customer, monkeypatch):
+    from app.core.config import settings
+
+    assert (
+        client.post("/api/v1/uploads/sign", headers=seller["headers"], json={"purpose": "product"}).status_code == 422
+    )
+    monkeypatch.setattr(settings, "cloudinary_cloud_name", "demo")
+    monkeypatch.setattr(settings, "cloudinary_api_key", "123")
+    monkeypatch.setattr(settings, "cloudinary_api_secret", "secreto")
+    r = client.post("/api/v1/uploads/sign", headers=seller["headers"], json={"purpose": "product"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["uploadUrl"].endswith("/demo/image/upload")
+    folder = data["fields"]["folder"]
+    assert data["fields"]["signature"] and data["fields"]["allowed_formats"]
+    # Un cliente no puede pedir firmas de productos
+    assert client.post("/api/v1/uploads/sign", headers=customer, json={"purpose": "product"}).status_code == 403
+
+    pid = seller["products"][0]["id"]
+    good = f"https://res.cloudinary.com/demo/image/upload/v1/{folder}/{data['fields']['public_id']}.jpg"
+    assert (
+        client.patch(f"/api/v1/seller/products/{pid}", headers=seller["headers"], json={"imageUrl": good}).status_code
+        == 200
+    )
+    for bad in (
+        "https://evil.com/x.jpg",
+        "https://res.cloudinary.com/demo/image/upload/v1/unimarket/product/otro/x.jpg",
+    ):
+        r = client.patch(f"/api/v1/seller/products/{pid}", headers=seller["headers"], json={"imageUrl": bad})
+        assert r.json()["error"]["code"] == "invalid_media_url"

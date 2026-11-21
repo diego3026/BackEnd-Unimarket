@@ -31,7 +31,14 @@ Base: `https://<dominio>/api/v1` · JSON en **camelCase** · fechas ISO 8601 en 
 
 **Paginación**: `?page=1&size=20` → `{items, total, page, size}`.
 
-**Enums** (mismos nombres que en Dart): `UserRole` consumer · entrepreneur · admin · `FulfillmentMode` delivery · pickup · `OrderStatus` pending · preparing · ready · onTheWay · delivered · cancelled · `PromotionKind` productDiscount · coupon · `DiscountType` percent · fixed · `PaymentKind` cash · nequi · card.
+**Caché y seguimiento en vivo**: todo `GET` responde con `ETag`. Para revisar un pedido o la lista de
+pedidos cada 5–10 s, enviar `If-None-Match: <etag anterior>`; si nada cambió llega `304` sin cuerpo
+(casi sin datos móviles). El catálogo público puede tener hasta 15–30 s de atraso.
+
+**Imágenes**: `POST /uploads/sign {purpose}` → subir el archivo (multipart) a `uploadUrl` con todos los
+`fields` → usar la `secure_url` que responde Cloudinary. Ver `docs/SERVICIOS.md`.
+
+**Enums** (mismos nombres que en Dart): `UserRole` consumer · entrepreneur · admin · `FulfillmentMode` delivery · pickup · `OrderStatus` pending · preparing · ready · onTheWay · delivered · cancelled · `PromotionKind` productDiscount · coupon · `DiscountType` percent · fixed · `PaymentKind` cash · nequi · breb · card (desactivado por ahora) · `PaymentStatus` pending · reported · paid · failed · refunded.
 
 ---
 
@@ -42,8 +49,8 @@ Base: `https://<dominio>/api/v1` · JSON en **camelCase** · fechas ISO 8601 en 
 |---|---|
 | Login | `POST /auth/login` |
 | Registro | `POST /auth/register` `{fullName, email, phone, password, acceptTerms}` |
-| Confirmar correo | `POST /auth/verify-email {token}` · `POST /me/resend-verification` |
-| Recuperar contraseña | `POST /auth/forgot-password {email}` → `POST /auth/reset-password {token, newPassword}` |
+| Confirmar correo | `POST /auth/verify-email {code}` (con sesión; código de 6 dígitos enviado al registrarse) · `POST /me/resend-verification` |
+| Recuperar contraseña | `POST /auth/forgot-password {email}` → `POST /auth/reset-password {email, code, newPassword}` (5 intentos por código) |
 | Cerrar sesión | `POST /auth/logout {refreshToken}` · todos: `POST /me/logout-all` |
 
 ### Cliente
@@ -59,6 +66,7 @@ Base: `https://<dominio>/api/v1` · JSON en **camelCase** · fechas ISO 8601 en 
 | Confirmar pedido | `POST /orders` + cabecera `Idempotency-Key: <uuid generado al abrir el checkout>` |
 | Mis pedidos | `GET /orders?active=true` / `?active=false` |
 | Seguir pedido | `GET /orders/{id}` (`history` trae la hora de cada estado; `pickupCode` para recoger) |
+| Pagar por transferencia | Si `paymentKind` es `breb` o `nequi`, el pedido trae `payTo {kind, key, holderName, amount, referenceHint}`: mostrar la llave/número con botón de copiar. Luego `POST /orders/{id}/payment-report {reference}` ("Ya pagué") |
 | Cancelar | `POST /orders/{id}/cancel {reason}` (solo mientras está `pending`) |
 | Reseña | `POST /orders/{id}/review {rating, comment, tags}` (solo `delivered`, una vez) |
 | Métodos de pago | `GET/POST /me/payment-methods` · `POST /me/payment-methods/{id}/default` · `DELETE …/{id}` |
@@ -92,7 +100,9 @@ El carrito de la app agrupa por tienda: se crea **un pedido por tienda**.
 | Inicio de la tienda | `GET /seller/store` · pedidos `GET /seller/orders?active=true` |
 | Avanzar pedido | `POST /seller/orders/{id}/status {status: nextStatus}`; al entregar un pedido de recogida enviar `pickupCode` |
 | Rechazar pedido | `POST /seller/orders/{id}/status {status: "cancelled", reason}` |
-| Configurar tienda | `PATCH /seller/store` (abierto, domicilio, recogida, costo de envío, pedido mínimo, minutos de preparación, punto de recogida, medios de pago) |
+| Confirmar transferencia | `POST /seller/orders/{id}/payment-confirm {received: true\|false}` (cuando `paymentStatus` es `reported`) |
+| Configurar tienda | `PATCH /seller/store` (abierto, domicilio, recogida, costo de envío, pedido mínimo, minutos de preparación, punto de recogida, medios de pago: `acceptsCash`, `acceptsNequi` + `nequiPhone`, `acceptsBreb` + `brebKey`) |
+| Fotos de productos / tienda | `POST /uploads/sign {purpose: "product"\|"store"}` |
 | Menú | `GET/POST /seller/products` · `PATCH/DELETE /seller/products/{id}` |
 | Promociones | `GET/POST /seller/promotions` · `PUT/DELETE …/{id}` · `POST …/{id}/pause` · `…/resume` |
 | Ganancias | `GET /seller/earnings?days=30` |
@@ -105,7 +115,7 @@ El carrito de la app agrupa por tienda: se crea **un pedido por tienda**.
 |---|---|
 | Usuarios | `GET /admin/users?q=&role=&status=` · `PATCH /admin/users/{id} {role?, status?}` |
 | Negocios | `GET /admin/stores?status=pending` · `POST /admin/stores/{id}/review {status, note}` |
-| Documentos | `GET /admin/stores/{id}/documents` · `POST /admin/documents/{id}/review` |
+| Documentos | `GET /admin/stores/{id}/documents` · `GET /admin/documents/{id}/file` (enlace de 5 min) · `POST /admin/documents/{id}/review` |
 | Productos | `GET /admin/products?hidden=` · `POST /admin/products/{id}/moderate {isHidden}` |
 | Reportes | `GET /admin/reports?days=30` |
 

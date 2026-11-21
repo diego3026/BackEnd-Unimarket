@@ -71,8 +71,26 @@ class TokenRepo(Repository[RefreshToken]):
             .values(revoked_at=now)
         )
 
-    def one_time(self, token_hash: str) -> OneTimeToken | None:
-        return self.db.scalar(select(OneTimeToken).where(OneTimeToken.token_hash == token_hash).with_for_update())
+    def latest_code(self, user_id: uuid.UUID, purpose, now: datetime) -> OneTimeToken | None:
+        return self.db.scalar(
+            select(OneTimeToken)
+            .where(
+                OneTimeToken.user_id == user_id,
+                OneTimeToken.purpose == purpose,
+                OneTimeToken.used_at.is_(None),
+                OneTimeToken.expires_at > now,
+            )
+            .order_by(OneTimeToken.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+
+    def void_codes(self, user_id: uuid.UUID, purpose, now: datetime) -> None:
+        self.db.execute(
+            update(OneTimeToken)
+            .where(OneTimeToken.user_id == user_id, OneTimeToken.purpose == purpose, OneTimeToken.used_at.is_(None))
+            .values(used_at=now)
+        )
 
 
 class CampusRepo(Repository[CampusPlace]):

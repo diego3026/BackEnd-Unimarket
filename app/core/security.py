@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -68,6 +69,20 @@ def new_opaque_token() -> str:
 def hash_token(token: str) -> str:
     """En la BD solo se guarda el SHA-256 del token, nunca el token."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def new_numeric_code(digits: int = 6) -> str:
+    return f"{secrets.randbelow(10**digits):0{digits}d}"
+
+
+def hash_code(scope: str, code: str) -> str:
+    """HMAC con la clave del servidor: un código de 6 dígitos no se puede
+    adivinar desde la BD aunque alguien la copie."""
+    return hmac.new(settings.secret_key.encode(), f"{scope}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def codes_match(expected_hash: str, scope: str, code: str) -> bool:
+    return hmac.compare_digest(expected_hash, hash_code(scope, code))
 
 
 def new_pickup_code() -> str:

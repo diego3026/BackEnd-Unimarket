@@ -13,6 +13,7 @@ from app.schemas.order import (
     OrderCancelIn,
     OrderCreateIn,
     OrderOut,
+    PaymentReportIn,
     ReviewIn,
     ReviewOut,
 )
@@ -59,6 +60,12 @@ def get_order(order_id: int, user: CurrentUser, db: DB):
 @router.post("/{order_id}/cancel", response_model=OrderOut)
 def cancel_order(order_id: int, data: OrderCancelIn, user: CurrentUser, db: DB):
     return OrderService(db).cancel_by_customer(user, order_id, data.reason)
+
+
+@router.post("/{order_id}/payment-report", response_model=OrderOut)
+def report_payment(order_id: int, data: PaymentReportIn, user: CurrentUser, db: DB):
+    """Avisa a la tienda que ya transferiste (Nequi o Bre-B). Ella confirma cuando le llegue."""
+    return OrderService(db).report_payment(user, order_id, data.reference)
 
 
 @router.post("/{order_id}/review", response_model=ReviewOut, status_code=status.HTTP_201_CREATED)

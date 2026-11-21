@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import BusinessRuleError, Forbidden, NotFound
 from app.core.security import new_pickup_code
 from app.models import Order, OrderLine, Product, Review, Store, User
@@ -83,8 +84,9 @@ class OrderService:
             raise BusinessRuleError("Esta tienda no permite recoger", code="pickup_unavailable")
         accepted = {
             PaymentKind.cash: store.accepts_cash,
-            PaymentKind.nequi: store.accepts_nequi,
-            PaymentKind.card: store.accepts_card,
+            PaymentKind.nequi: store.accepts_nequi and bool(store.nequi_phone),
+            PaymentKind.breb: store.accepts_breb and bool(store.breb_key),
+            PaymentKind.card: store.accepts_card and bool(settings.card_payment_provider),
         }
         if not accepted[data.payment_kind]:
             raise BusinessRuleError("La tienda no acepta ese medio de pago", code="payment_not_accepted")
@@ -203,7 +205,8 @@ class OrderService:
             PaymentKind.cash: "Efectivo al recoger"
             if data.mode == FulfillmentMode.pickup
             else "Efectivo contra entrega",
-            PaymentKind.nequi: "Nequi",
+            PaymentKind.nequi: "Transferencia Nequi",
+            PaymentKind.breb: "Transferencia Bre-B",
             PaymentKind.card: f"{card.brand} •••• {card.last4}" if card else "Tarjeta",
         }[data.payment_kind]
         order = Order(
@@ -222,7 +225,7 @@ class OrderService:
             delivery_fee=priced.delivery_fee,
             total=priced.total,
             payment_kind=data.payment_kind,
-            # La integración con la pasarela marcará "paid"; efectivo/Nequi se cobra al entregar.
+            # Efectivo se marca pagado al entregar; transferencias cuando la tienda confirma.
             payment_status=PaymentStatus.pending,
             payment_method_id=card.id if card else None,
             payment_label=label,
@@ -309,8 +312,9 @@ class OrderService:
             raise BusinessRuleError("El código de recogida no coincide", code="invalid_pickup_code")
         order.status = data.status
         order.history = {**(order.history or {}), data.status.value: now().isoformat()}
-        if data.status == OrderStatus.delivered and order.payment_kind != PaymentKind.card:
+        if data.status == OrderStatus.delivered and order.payment_kind == PaymentKind.cash:
             order.payment_status = PaymentStatus.paid
+            order.payment_confirmed_at = now()
         self._notify_customer(order)
         self.db.commit()
         return mappers.order_out(self.orders.detail(order.id), viewer="seller")
@@ -364,6 +368,57 @@ class OrderService:
             ),
             data={"orderId": order.id, "status": order.status.value},
         )
+
+    # ------------------------------------------------------- transferencias
+    def report_payment(self, user: User, order_id: int, reference: str):
+        """El cliente avisa que ya transfirió al Nequi o a la llave Bre-B de la tienda."""
+        order = self.orders.detail(order_id, lock=True)
+        if self._viewer(user, order) != "customer":
+            raise Forbidden("Solo quien hizo el pedido puede reportar el pago")
+        if not order.payment_kind.is_transfer:
+            raise BusinessRuleError("Este pedido no se paga por transferencia", code="not_transfer")
+        if not order.status.is_active:
+            raise BusinessRuleError("El pedido ya terminó", code="order_closed")
+        if order.payment_status not in (PaymentStatus.pending, PaymentStatus.failed):
+            raise BusinessRuleError("Ya reportaste este pago", code="already_reported")
+        order.payment_status = PaymentStatus.reported
+        order.payment_reference = reference
+        order.payment_reported_at = now()
+        self.catalog.notify_store_owner(
+            order.store,
+            f"Revisa el pago del pedido #{order.id}",
+            f"El cliente reporta una transferencia de ${order.total:,.0f}".replace(",", ".")
+            + (f" (ref. {reference})" if reference else ""),
+            {"orderId": order.id},
+        )
+        self.db.commit()
+        return mappers.order_out(self.orders.detail(order.id), viewer="customer")
+
+    def confirm_payment(self, user: User, order_id: int, received: bool):
+        """La tienda confirma (o no) que el dinero llegó a su cuenta."""
+        order = self.orders.detail(order_id, lock=True)
+        if self._viewer(user, order) != "seller":
+            raise Forbidden("Solo la tienda puede confirmar el pago")
+        if order.payment_kind == PaymentKind.card:
+            raise BusinessRuleError("Los pagos con tarjeta los confirma la pasarela", code="card_payment")
+        if order.payment_status == PaymentStatus.paid:
+            raise BusinessRuleError("El pago ya estaba confirmado", code="already_paid")
+        order.payment_status = PaymentStatus.paid if received else PaymentStatus.failed
+        order.payment_confirmed_at = now() if received else None
+        notify(
+            self.db,
+            order.customer_id,
+            type_="order",
+            title="Pago confirmado" if received else "La tienda no ve tu pago",
+            body=(
+                f"La tienda recibió el pago del pedido #{order.id}."
+                if received
+                else f"Revisa la transferencia del pedido #{order.id} o escríbele a la tienda."
+            ),
+            data={"orderId": order.id},
+        )
+        self.db.commit()
+        return mappers.order_out(self.orders.detail(order.id), viewer="seller")
 
     # ---------------------------------------------------------------- reseñas
     def review(self, user: User, order_id: int, data: ReviewIn):

@@ -13,9 +13,12 @@ from app.core.config import settings
 from app.core.errors import Conflict, Forbidden, Unauthorized
 from app.core.security import (
     DUMMY_HASH,
+    codes_match,
     create_access_token,
+    hash_code,
     hash_password,
     hash_token,
+    new_numeric_code,
     new_opaque_token,
     verify_password,
 )
@@ -31,12 +34,17 @@ from app.schemas.auth import (
     UpdateProfileIn,
 )
 from app.services import mappers
-from app.services.email import send_email
+from app.services.email import code_email, send_email
+from app.services.media import validate_media_url
 from app.services.pricing import now
 
 logger = logging.getLogger("unimarket.auth")
 
 INVALID_CREDENTIALS = "Correo o contraseña incorrectos"
+INVALID_CODE = "El código no es válido"
+MAX_CODE_ATTEMPTS = 5
+RESET_MINUTES = 15
+VERIFY_MINUTES = 30
 
 
 def _aware(dt):
@@ -125,6 +133,8 @@ class AuthService:
         return mappers.user_out(user, store.id if store else None)
 
     def update_profile(self, user: User, data: UpdateProfileIn) -> mappers.UserOut:
+        if data.avatar_url:
+            validate_media_url(data.avatar_url, "avatar", user.id)
         for field, value in data.model_dump(exclude_unset=True).items():
             if value is not None:
                 setattr(user, field, value)
@@ -139,77 +149,86 @@ class AuthService:
         self.tokens.revoke_user(user.id, now())
         self.db.commit()
 
-    # --- Correo y recuperación ---------------------------------------------
+    # --- Correo y recuperación (códigos de 6 dígitos) ---------------------
     def request_password_reset(self, email: str) -> None:
         """Siempre responde igual, exista o no la cuenta (evita enumerar correos)."""
         user = self.users.by_email(email)
         if user is None or user.status != UserStatus.active:
             return
-        token = self._one_time(user, TokenPurpose.reset_password, minutes=30)
-        send_email(
-            user.email,
-            "Recupera tu contraseña de UniMarket",
-            f"Hola {user.full_name},\n\nUsa este enlace para crear una nueva contraseña "
-            f"(vence en 30 minutos):\n{settings.frontend_reset_url}?token={token}\n\n"
-            "Si no lo pediste, ignora este correo.",
+        code = self._new_code(user, TokenPurpose.reset_password, minutes=RESET_MINUTES)
+        text, html = code_email(
+            "Recupera tu contraseña",
+            f"Hola {user.full_name.split()[0]}, escribe este código en la app para crear una nueva contraseña.",
+            code,
+            RESET_MINUTES,
         )
         self.db.commit()
+        send_email(user.email, "Tu código para recuperar la contraseña", text, html)
 
     def reset_password(self, data: ResetPasswordIn) -> None:
-        record = self._consume(data.token, TokenPurpose.reset_password)
-        user = self.users.get(record.user_id)
-        if user is None:
-            raise Unauthorized("El enlace no es válido o ya venció", code="invalid_token")
+        user = self.users.by_email(data.email)
+        if user is None or user.status != UserStatus.active:
+            raise Unauthorized(INVALID_CODE, code="invalid_code")
+        self._consume_code(user, TokenPurpose.reset_password, data.code)
         user.password_hash = hash_password(data.new_password)
         user.token_version += 1
         self.tokens.revoke_user(user.id, now())
         self.db.commit()
 
-    def verify_email(self, token: str) -> None:
-        record = self._consume(token, TokenPurpose.verify_email)
-        user = self.users.get(record.user_id)
-        if user:
-            user.email_verified = True
+    def verify_email(self, user: User, code: str) -> None:
+        if user.email_verified:
+            return
+        self._consume_code(user, TokenPurpose.verify_email, code)
+        user.email_verified = True
         self.db.commit()
 
     def resend_verification(self, user: User) -> None:
         if not user.email_verified:
             self._send_verification(user)
-            self.db.commit()
 
     # --- Internos ---------------------------------------------------------
     def _send_verification(self, user: User) -> None:
-        token = self._one_time(user, TokenPurpose.verify_email, minutes=60 * 24)
-        send_email(
-            user.email,
-            "Confirma tu correo en UniMarket",
-            f"Hola {user.full_name},\n\nTu código de verificación es:\n{token}\n\nVence en 24 horas.",
+        code = self._new_code(user, TokenPurpose.verify_email, minutes=VERIFY_MINUTES)
+        text, html = code_email(
+            "Confirma tu correo",
+            f"Hola {user.full_name.split()[0]}, bienvenido a UniMarket. Escribe este código en la app.",
+            code,
+            VERIFY_MINUTES,
         )
+        self.db.commit()
+        send_email(user.email, "Tu código de verificación de UniMarket", text, html)
 
-    def _one_time(self, user: User, purpose: TokenPurpose, *, minutes: int) -> str:
-        token = new_opaque_token()
+    def _new_code(self, user: User, purpose: TokenPurpose, *, minutes: int) -> str:
+        """Invalida los códigos anteriores y crea uno nuevo (solo se guarda su HMAC)."""
+        current = now()
+        self.tokens.void_codes(user.id, purpose, current)
+        code = new_numeric_code()
+        record_id = uuid.uuid4()
         self.db.add(
             OneTimeToken(
+                id=record_id,
                 user_id=user.id,
                 purpose=purpose,
-                token_hash=hash_token(token),
-                expires_at=now() + timedelta(minutes=minutes),
-                created_at=now(),
+                token_hash=hash_code(str(record_id), code),
+                expires_at=current + timedelta(minutes=minutes),
+                created_at=current,
             )
         )
-        return token
+        return code
 
-    def _consume(self, token: str, purpose: TokenPurpose) -> OneTimeToken:
-        record = self.tokens.one_time(hash_token(token))
-        if (
-            record is None
-            or record.purpose != purpose
-            or record.used_at is not None
-            or _aware(record.expires_at) <= now()
-        ):
-            raise Unauthorized("El enlace no es válido o ya venció", code="invalid_token")
+    def _consume_code(self, user: User, purpose: TokenPurpose, code: str) -> None:
+        record = self.tokens.latest_code(user.id, purpose, now())
+        if record is None:
+            raise Unauthorized("El código venció. Pide uno nuevo.", code="code_expired")
+        if not codes_match(record.token_hash, str(record.id), code):
+            record.attempts += 1
+            if record.attempts >= MAX_CODE_ATTEMPTS:
+                record.used_at = now()  # se bloquea: hay que pedir otro
+            self.db.commit()
+            left = MAX_CODE_ATTEMPTS - record.attempts
+            message = f"Código incorrecto. Te quedan {left} intentos." if left > 0 else "Pide un código nuevo."
+            raise Unauthorized(message, code="invalid_code")
         record.used_at = now()
-        return record
 
     def _issue(
         self, user: User, *, family_id: uuid.UUID | None = None, user_agent: str = "", return_record: bool = False

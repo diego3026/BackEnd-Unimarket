@@ -62,6 +62,10 @@ class Order(Timestamps, Base):
         Uuid, ForeignKey("payment_methods.id", ondelete="SET NULL")
     )
     payment_label: Mapped[str] = mapped_column(String(60), default="")
+    # Transferencias: referencia que reporta el cliente y fechas de reporte/confirmación
+    payment_reference: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    payment_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Fecha de cada cambio de estado: {"pending": "...", "preparing": "..."}
     history: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

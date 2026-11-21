@@ -85,23 +85,60 @@ def test_change_password_invalidates_tokens(client):
     )
 
 
-def test_password_reset_flow(client, monkeypatch):
+def _code_from(sent: dict) -> str:
+    import re
+
+    return re.search(r"Tu código es: (\d{6})", sent["text"]).group(1)
+
+
+def test_password_reset_with_code(client, monkeypatch):
     register(client)
     sent = {}
-    monkeypatch.setattr("app.services.auth.send_email", lambda to, s, body: sent.update(body=body))
+    monkeypatch.setattr("app.services.auth.send_email", lambda to, s, text, html=None: sent.update(text=text))
     r = client.post("/api/v1/auth/forgot-password", json={"email": "cliente@test.co"})
     assert r.status_code == 202
-    token = sent["body"].split("token=")[1].split()[0]
-    # Correo inexistente: misma respuesta.
+    code = _code_from(sent)
+    # Correo inexistente: misma respuesta, sin revelar nada.
     assert client.post("/api/v1/auth/forgot-password", json={"email": "x@test.co"}).status_code == 202
-    r = client.post("/api/v1/auth/reset-password", json={"token": token, "newPassword": "Recuperada1"})
-    assert r.status_code == 200
-    # El token es de un solo uso.
+    body = {"email": "cliente@test.co", "code": code, "newPassword": "Recuperada1"}
+    assert client.post("/api/v1/auth/reset-password", json=body).status_code == 200
+    # El código es de un solo uso.
+    assert client.post("/api/v1/auth/reset-password", json=body).status_code == 401
     assert (
-        client.post("/api/v1/auth/reset-password", json={"token": token, "newPassword": "Otra12345"}).status_code == 401
+        client.post("/api/v1/auth/login", json={"email": "cliente@test.co", "password": "Recuperada1"}).status_code
+        == 200
     )
     with SessionLocal() as db:
-        assert all(t.token_hash != token for t in db.query(OneTimeToken))  # solo se guarda el hash
+        assert all(code not in t.token_hash for t in db.query(OneTimeToken))  # solo se guarda el HMAC
+
+
+def test_code_locks_after_five_wrong_attempts(client, monkeypatch):
+    register(client)
+    sent = {}
+    monkeypatch.setattr("app.services.auth.send_email", lambda to, s, text, html=None: sent.update(text=text))
+    client.post("/api/v1/auth/forgot-password", json={"email": "cliente@test.co"})
+    code = _code_from(sent)
+    wrong = "000000" if code != "000000" else "111111"
+    for _ in range(5):
+        r = client.post(
+            "/api/v1/auth/reset-password", json={"email": "cliente@test.co", "code": wrong, "newPassword": "Otra12345"}
+        )
+        assert r.status_code == 401
+    # Ni el código correcto sirve ya: hay que pedir otro.
+    r = client.post(
+        "/api/v1/auth/reset-password", json={"email": "cliente@test.co", "code": code, "newPassword": "Otra12345"}
+    )
+    assert r.json()["error"]["code"] == "code_expired"
+
+
+def test_verify_email_with_code(client, monkeypatch):
+    sent = {}
+    monkeypatch.setattr("app.services.auth.send_email", lambda to, s, text, html=None: sent.update(text=text))
+    tokens = register(client)
+    assert tokens["user"]["emailVerified"] is False
+    h = auth(tokens)
+    assert client.post("/api/v1/auth/verify-email", headers=h, json={"code": _code_from(sent)}).status_code == 200
+    assert client.get("/api/v1/me", headers=h).json()["emailVerified"] is True
 
 
 def test_invalid_and_missing_tokens(client):

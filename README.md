@@ -8,6 +8,8 @@ FastAPI + PostgreSQL, pensado para desplegarse en **Railway**.
 - **Administrador:** usuarios, aprobación de tiendas, moderación de productos, documentos y reportes.
 - **Investigación:** los endpoints del proyecto 5G Fog-Cloud (MOTOA/JROF) siguen disponibles en `/api/v1/research`.
 
+Servicios externos (todos con plan gratis): pagos por **Bre-B / Nequi** directo al emprendedor, imágenes en **Cloudinary**, correo por **Gmail API**. Comparación y configuración en [`docs/SERVICIOS.md`](docs/SERVICIOS.md).
+
 ---
 
 ## Arquitectura
@@ -55,6 +57,9 @@ Los endpoints no tocan la BD y los repositorios no deciden reglas; así cada cap
 - **JWT** de acceso corto (30 min) + **refresh token rotativo** de un solo uso guardado como hash. Si alguien reutiliza un refresh viejo, se cierra toda la sesión (detección de robo).
 - Cambiar contraseña, suspender un usuario o "cerrar sesión en todos los dispositivos" invalida al instante todos sus tokens (`token_version`).
 - Login con respuesta idéntica exista o no el correo y tiempo constante; recuperar contraseña no revela si la cuenta existe.
+- Verificación de correo y recuperación con **códigos de 6 dígitos** guardados como HMAC, que vencen en 15–30 min y se bloquean tras 5 intentos.
+- Imágenes: subida firmada directa a Cloudinary; el backend solo acepta URLs de nuestra cuenta y de la carpeta del usuario. Documentos de identidad privados con enlace temporal para el admin.
+- Pagos por transferencia: el dinero va directo al emprendedor; UniMarket no maneja fondos ni datos de tarjetas.
 - **Límite de intentos** por IP en login, registro, refresh y recuperación.
 - Roles verificados en cada endpoint y **propiedad del recurso** (un emprendedor solo toca su tienda; un pedido ajeno responde 404, no revela que existe).
 - Los cuerpos JSON rechazan campos desconocidos: nadie puede enviar `role: admin` ni `price` en un pedido.
@@ -94,7 +99,7 @@ pytest                                # usa TEST_DATABASE_URL o la BD unimarket_
 ruff check app tests scripts
 ```
 
-Las pruebas cubren el flujo completo cliente ↔ emprendedor, cupones, descuentos, inventario con compras simultáneas, idempotencia, roles, rotación de tokens, recuperación de contraseña, cifrado y suspensión de cuentas.
+Las pruebas (60) cubren el flujo completo cliente ↔ emprendedor, pagos por Bre-B/Nequi, cupones, descuentos, inventario con compras simultáneas, idempotencia, roles, rotación de tokens, códigos de verificación con bloqueo, subidas firmadas, caché/ETag, cifrado y suspensión de cuentas.
 
 ---
 
@@ -113,6 +118,9 @@ Las pruebas cubren el flujo completo cliente ↔ emprendedor, cupones, descuento
    | `ALLOWED_HOSTS` | el dominio que te da Railway, p. ej. `unimarket-api.up.railway.app` |
    | `ENABLE_DOCS` | `true` mientras desarrollas; `false` cuando sea público |
    | `FIRST_ADMIN_EMAIL` / `FIRST_ADMIN_PASSWORD` | tu correo y una clave de 10+ caracteres |
+   | `EMAIL_PROVIDER`, `EMAIL_FROM`, `GMAIL_*` | ver [`docs/SERVICIOS.md`](docs/SERVICIOS.md#3-correo-sin-dominio-propio) |
+   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | del dashboard de Cloudinary |
+   | `WEB_CONCURRENCY` | `2` (súbelo si aumentas la CPU del servicio) |
 
    ⚠️ Guarda `DATA_ENCRYPTION_KEY` en un lugar seguro: si la pierdes, no se pueden leer las cuentas bancarias guardadas.
 4. **Deploy.** Railway usa el `Dockerfile`; `railway.json` corre `alembic upgrade head` antes de cada despliegue y revisa `/health`.
@@ -127,9 +135,31 @@ Si escalas a varias réplicas, agrega Redis en Railway, pon `RATE_LIMIT_STORAGE_
 
 ---
 
+## Concurrencia y latencia
+
+- **Procesos**: `WEB_CONCURRENCY` (≈ núcleos de CPU). Cada proceso atiende muchas peticiones a la vez con su pool de hilos.
+- **Conexiones a la BD**: `WEB_CONCURRENCY × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` debe quedar por debajo de `max_connections` de PostgreSQL (100 por defecto). Con 2 procesos y 10+10 son 40. Si no hay conexión libre en 10 s la petición falla rápido en vez de colgarse.
+- **Protecciones**: ninguna consulta puede tardar más de `DB_STATEMENT_TIMEOUT_MS`; las transacciones inactivas se cierran a los 30 s.
+- **Catálogo en caché**: las lecturas públicas (productos, tiendas, cupones) se guardan 15 s en memoria por proceso y llevan `Cache-Control: public` y `ETag`. Cuando muchos abren Inicio a la vez, solo una petición llega a la BD.
+- **ETag en todo GET**: la app puede revisar un pedido cada pocos segundos con `If-None-Match`; si nada cambió recibe `304` sin cuerpo.
+- **GZip** en respuestas grandes y **búsqueda con índices trigram** (`pg_trgm`) para `ILIKE '%texto%'`.
+- **Inventario sin sobreventa**: filas bloqueadas en orden fijo al comprar (probado con compras simultáneas).
+- **Escalar**: más réplicas en Railway (agrega Redis para compartir el límite de intentos, ver abajo) o un CDN delante del catálogo.
+
+Prueba de carga (`python -m scripts.loadtest`), 2 procesos en una máquina de **2 vCPU** compartida con el generador de carga, 2.000 productos:
+
+| Escenario | Throughput | p50 | p95 | p99 | Errores |
+|---|---|---|---|---|---|
+| 300 usuarios navegando y comprando (pausa 0–6 s) | 93 req/s | 7 ms | 73 ms | 115 ms | 0 % |
+| 100 usuarios sin pausa (saturación) | 155 req/s | 427 ms | 1,9 s | 3,2 s | 0 % |
+
+En el escenario realista, crear un pedido tarda 51 ms (p50) y ver el catálogo 3 ms. La saturación muestra el techo de 2 vCPU: con más tráfico se agregan procesos o réplicas.
+
+---
+
 ## Variables de entorno
 
-Todas están documentadas en [`.env.example`](.env.example). Las más importantes: `DATABASE_URL`, `ENVIRONMENT`, `SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `ALLOWED_HOSTS`, `CORS_ORIGINS`, `AUTO_APPROVE_STORES`, `SMTP_*`.
+Todas están documentadas en [`.env.example`](.env.example). Las más importantes: `DATABASE_URL`, `ENVIRONMENT`, `SECRET_KEY`, `DATA_ENCRYPTION_KEY`, `ALLOWED_HOSTS`, `EMAIL_PROVIDER` + `GMAIL_*`, `CLOUDINARY_*`, `WEB_CONCURRENCY`.
 
 ---
 
@@ -139,7 +169,6 @@ El detalle de cada endpoint y cómo se conecta con cada pantalla de la app está
 
 ## Pendiente (siguientes pasos)
 
-- **Pasarela de pagos** (Wompi o Mercado Pago): tokenizar tarjetas en la app y confirmar pagos por webhook. Hoy efectivo y Nequi quedan `pending` hasta entregar; tarjeta guarda el método pero no cobra.
-- **Imágenes y documentos**: subirlos a Cloudinary o Cloudflare R2 y guardar solo la URL (el disco de Railway se borra en cada despliegue).
-- **Notificaciones push** (Firebase Cloud Messaging): el punto único para enviarlas es `app/services/notifications.py::notify`.
-- **Correo**: configurar `SMTP_*` (p. ej. Resend o Brevo) para verificación y recuperación de contraseña.
+- **Tarjetas** con Mercado Pago Split 1:1 (el dinero llega directo a cada emprendedor). Ver [`docs/SERVICIOS.md`](docs/SERVICIOS.md).
+- **Notificaciones push** (Firebase Cloud Messaging, gratis): el punto único para enviarlas es `app/services/notifications.py::notify`.
+- **Dominio propio** (≈ US$10/año) para enviar correo desde `no-reply@tu-dominio` con Resend o Brevo.

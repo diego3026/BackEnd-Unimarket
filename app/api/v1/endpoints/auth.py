@@ -25,7 +25,7 @@ me_router = APIRouter(prefix="/me", tags=["Mi cuenta"])
 
 
 @router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/minute")
+@limiter.limit(settings.register_rate_limit)
 def register(request: Request, data: RegisterIn, db: DB):
     """Crea una cuenta de cliente e inicia sesión."""
     return AuthService(db).register(data, user_agent(request))
@@ -54,7 +54,7 @@ def logout(data: RefreshIn, db: DB):
 @limiter.limit("3/minute")
 def forgot_password(request: Request, data: ForgotPasswordIn, db: DB):
     AuthService(db).request_password_reset(data.email.lower())
-    return Message(message="Si el correo está registrado, te enviamos las instrucciones")
+    return Message(message="Si el correo está registrado, te enviamos un código")
 
 
 @router.post("/reset-password", response_model=Message)
@@ -66,8 +66,9 @@ def reset_password(request: Request, data: ResetPasswordIn, db: DB):
 
 @router.post("/verify-email", response_model=Message)
 @limiter.limit("10/minute")
-def verify_email(request: Request, data: VerifyEmailIn, db: DB):
-    AuthService(db).verify_email(data.token)
+def verify_email(request: Request, data: VerifyEmailIn, user: CurrentUser, db: DB):
+    """Confirma el correo con el código de 6 dígitos enviado al registrarse."""
+    AuthService(db).verify_email(user, data.code)
     return Message(message="Correo verificado")
 
 

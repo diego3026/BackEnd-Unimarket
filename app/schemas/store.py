@@ -19,6 +19,10 @@ class CampusPlaceOut(CamelModel):
     longitude: float | None
 
 
+# Llave Bre-B: @alias, celular, correo o número de documento (vacío para quitarla)
+BREB_KEY_PATTERN = r"^(@[A-Za-z0-9._-]{3,40}|3\d{9}|[^@\s]+@[^@\s]+\.[a-z]{2,}|\d{5,15})?$"
+
+
 def _url(v: str | None) -> str | None:
     if v in (None, ""):
         return v
@@ -40,6 +44,9 @@ class StoreSettingsFields(InputModel):
     accepts_cash: bool | None = None
     accepts_nequi: bool | None = None
     accepts_card: bool | None = None
+    accepts_breb: bool | None = None
+    nequi_phone: str | None = Field(None, pattern=r"^(3\d{9})?$")
+    breb_key: str | None = Field(None, max_length=60, pattern=BREB_KEY_PATTERN)
     phone: str | None = Field(None, max_length=20)
 
 
@@ -79,6 +86,7 @@ class StoreSettingsOut(CamelModel):
     accepts_cash: bool
     accepts_nequi: bool
     accepts_card: bool
+    accepts_breb: bool
     phone: str
 
 

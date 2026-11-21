@@ -39,13 +39,19 @@ class DiscountType(str, enum.Enum):
 
 
 class PaymentKind(str, enum.Enum):
-    cash = "cash"
-    nequi = "nequi"
-    card = "card"
+    cash = "cash"  # Efectivo al recibir o recoger
+    nequi = "nequi"  # Transferencia al Nequi del emprendedor
+    breb = "breb"  # Transferencia inmediata Bre-B (llave del emprendedor), sin comisión
+    card = "card"  # Tarjeta por pasarela (Mercado Pago), cuando se active
+
+    @property
+    def is_transfer(self) -> bool:
+        return self in (PaymentKind.nequi, PaymentKind.breb)
 
 
 class PaymentStatus(str, enum.Enum):
-    pending = "pending"  # Efectivo/Nequi: se paga al entregar
+    pending = "pending"  # Aún no se ha pagado
+    reported = "reported"  # El cliente dice que ya transfirió; falta que la tienda confirme
     authorized = "authorized"
     paid = "paid"
     refunded = "refunded"

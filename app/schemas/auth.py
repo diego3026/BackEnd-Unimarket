@@ -95,7 +95,8 @@ class ForgotPasswordIn(InputModel):
 
 
 class ResetPasswordIn(InputModel):
-    token: str = Field(min_length=20, max_length=200)
+    email: EmailStr
+    code: str = Field(pattern=r"^\d{6}$")
     new_password: str
 
     _pw = field_validator("new_password")(_check_password)
@@ -109,7 +110,7 @@ class ChangePasswordIn(InputModel):
 
 
 class VerifyEmailIn(InputModel):
-    token: str = Field(min_length=20, max_length=200)
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 class UpdateProfileIn(InputModel):

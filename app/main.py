@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -67,6 +68,8 @@ def create_app() -> FastAPI:
         )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
     app.add_middleware(RequestContextMiddleware, hsts=settings.is_production)
+    # Comprime respuestas JSON grandes (listas de productos): menos datos móviles y menos latencia.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
     register_exception_handlers(app)
 
@@ -87,9 +90,14 @@ def create_app() -> FastAPI:
         except Exception:  # El módulo de investigación es opcional
             logger.exception("No se pudo cargar el módulo de investigación")
 
+    @app.get("/health/live", tags=["Sistema"])
+    def live():
+        """Vivo (no toca la BD)."""
+        return {"status": "ok"}
+
     @app.get("/health", tags=["Sistema"])
     def health():
-        """Railway usa este endpoint para saber si el servicio está vivo."""
+        """Listo para atender: verifica la conexión con PostgreSQL (lo usa Railway)."""
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))

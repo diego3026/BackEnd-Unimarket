@@ -61,6 +61,16 @@ class ReviewOut(CamelModel):
     created_at: datetime
 
 
+class PayToOut(CamelModel):
+    """Datos para transferir al emprendedor (solo los ve el cliente mientras debe pagar)."""
+
+    kind: PaymentKind
+    key: str
+    holder_name: str
+    amount: int
+    reference_hint: str
+
+
 class OrderOut(CamelModel):
     id: int
     pickup_code: str | None = None
@@ -84,6 +94,8 @@ class OrderOut(CamelModel):
     payment_kind: PaymentKind
     payment_status: PaymentStatus
     payment_label: str
+    payment_reference: str = ""
+    pay_to: PayToOut | None = None
     history: dict[str, str]
     next_status: OrderStatus | None = None
     cancel_reason: str
@@ -96,6 +108,18 @@ class OrderStatusIn(InputModel):
     # Para entregar un pedido de recogida el emprendedor confirma el código del cliente.
     pickup_code: str | None = Field(None, pattern=r"^\d{4}$")
     reason: str = Field("", max_length=200)
+
+
+class PaymentReportIn(InputModel):
+    """El cliente avisa que ya transfirió (Nequi o Bre-B)."""
+
+    reference: str = Field("", max_length=60)
+
+
+class PaymentConfirmIn(InputModel):
+    """La tienda confirma si el dinero llegó."""
+
+    received: bool
 
 
 class OrderCancelIn(InputModel):

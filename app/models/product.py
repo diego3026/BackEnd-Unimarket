@@ -34,6 +34,8 @@ class Product(UUIDPk, Timestamps, Base):
         CheckConstraint("price >= 0", name="price_positive"),
         CheckConstraint("stock >= 0", name="stock_positive"),
         Index("ix_products_store_available", "store_id", "is_available"),
+        # Búsqueda rápida con ILIKE '%texto%' (extensión pg_trgm)
+        Index("ix_products_name_trgm", "name", postgresql_using="gin", postgresql_ops={"name": "gin_trgm_ops"}),
     )
 
     store_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("stores.id", ondelete="CASCADE"), index=True)

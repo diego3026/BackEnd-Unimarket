@@ -47,6 +47,7 @@ from app.schemas.store import (
     StoreUpdateIn,
 )
 from app.services import mappers
+from app.services.media import validate_media_url
 from app.services.notifications import notify
 from app.services.pricing import coupon_discount, discounted_prices, is_running, now
 
@@ -93,6 +94,7 @@ class CatalogService:
         if self.stores.by_owner(user.id):
             raise Conflict("Ya tienes una tienda registrada", code="store_exists")
         self._check_place(data.pickup_place_id)
+        validate_media_url(data.image_url, "store", user.id)
         fields = data.model_dump(exclude_none=True)
         store = Store(owner_id=user.id, **fields)
         store.status = StoreStatus.approved if settings.auto_approve_stores else StoreStatus.pending
@@ -116,12 +118,20 @@ class CatalogService:
         changes = data.model_dump(exclude_unset=True)
         if "pickup_place_id" in changes:
             self._check_place(changes["pickup_place_id"])
+        if changes.get("image_url"):
+            validate_media_url(changes["image_url"], "store", user.id)
         for k, v in changes.items():
             if v is not None or k == "pickup_place_id":
                 setattr(store, k, v)
         if not store.allows_delivery and not store.allows_pickup:
             raise BusinessRuleError("Activa al menos domicilio o recogida", code="no_fulfillment")
-        if not (store.accepts_cash or store.accepts_nequi or store.accepts_card):
+        if store.accepts_nequi and not store.nequi_phone:
+            raise BusinessRuleError("Escribe el número de Nequi donde recibirás los pagos", code="missing_nequi")
+        if store.accepts_breb and not store.breb_key:
+            raise BusinessRuleError("Escribe tu llave Bre-B para recibir transferencias", code="missing_breb_key")
+        if store.accepts_card and not settings.card_payment_provider:
+            raise BusinessRuleError("El pago con tarjeta todavía no está disponible", code="card_unavailable")
+        if not (store.accepts_cash or store.accepts_nequi or store.accepts_breb or store.accepts_card):
             raise BusinessRuleError("Activa al menos un medio de pago", code="no_payment")
         self.db.commit()
         return mappers.store_out(self.stores.with_details(store.id))
@@ -148,6 +158,7 @@ class CatalogService:
 
     def add_document(self, user: User, data: StoreDocumentIn):
         store = self.my_store(user)
+        validate_media_url(data.file_url, "document", user.id)
         doc = StoreDocument(store_id=store.id, name=data.name, file_url=data.file_url)
         self.db.add(doc)
         self.db.commit()
@@ -230,6 +241,7 @@ class CatalogService:
 
     def create_product(self, user: User, data: ProductIn):
         store = self.my_store(user)
+        validate_media_url(data.image_url, "product", user.id)
         p = Product(store_id=store.id, **data.model_dump())
         self.products.add(p)
         if data.category not in (store.menu_sections or []):
@@ -239,6 +251,8 @@ class CatalogService:
 
     def update_product(self, user: User, product_id: uuid.UUID, data: ProductUpdateIn):
         p = self._own_product(user, product_id)
+        if data.image_url:
+            validate_media_url(data.image_url, "product", user.id)
         for k, v in data.model_dump(exclude_unset=True).items():
             if v is not None:
                 setattr(p, k, v)

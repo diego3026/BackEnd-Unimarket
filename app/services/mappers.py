@@ -18,10 +18,10 @@ from app.models import (
     StoreDocument,
     User,
 )
-from app.models.enums import FulfillmentMode, OrderStatus
+from app.models.enums import FulfillmentMode, OrderStatus, PaymentKind, PaymentStatus
 from app.schemas.account import AddressOut, NotificationOut, PaymentMethodOut
 from app.schemas.auth import UserOut
-from app.schemas.order import OrderLineOut, OrderOut, ReviewOut
+from app.schemas.order import OrderLineOut, OrderOut, PayToOut, ReviewOut
 from app.schemas.product import ProductAdminOut, ProductOut, PromotionOut
 from app.schemas.store import (
     CampusPlaceOut,
@@ -89,6 +89,7 @@ def _store_fields(s: Store) -> dict:
         accepts_cash=s.accepts_cash,
         accepts_nequi=s.accepts_nequi,
         accepts_card=s.accepts_card,
+        accepts_breb=s.accepts_breb,
         phone=s.phone,
     )
 
@@ -174,6 +175,22 @@ def review_out(r: Review) -> ReviewOut:
     )
 
 
+def pay_to(o: Order) -> PayToOut | None:
+    """Instrucciones para transferir, solo mientras el pago está pendiente."""
+    if not o.payment_kind.is_transfer or not o.status.is_active or not o.store:
+        return None
+    if o.payment_status not in (PaymentStatus.pending, PaymentStatus.failed):
+        return None
+    key = o.store.nequi_phone if o.payment_kind == PaymentKind.nequi else o.store.breb_key
+    return PayToOut(
+        kind=o.payment_kind,
+        key=key,
+        holder_name=o.store.owner.full_name if o.store.owner else o.store.name,
+        amount=o.total,
+        reference_hint=f"UniMarket #{o.id}",
+    )
+
+
 def order_out(o: Order, *, viewer: str) -> OrderOut:
     """`viewer` es "customer", "seller" o "admin".
 
@@ -215,6 +232,8 @@ def order_out(o: Order, *, viewer: str) -> OrderOut:
         payment_kind=o.payment_kind,
         payment_status=o.payment_status,
         payment_label=o.payment_label,
+        payment_reference=o.payment_reference,
+        pay_to=pay_to(o) if viewer == "customer" else None,
         history=dict(o.history or {}),
         next_status=next_status(o) if viewer != "customer" else None,
         cancel_reason=o.cancel_reason,

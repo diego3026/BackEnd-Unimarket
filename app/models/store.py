@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -48,6 +49,7 @@ class Store(UUIDPk, Timestamps, Base):
         CheckConstraint("delivery_fee >= 0", name="delivery_fee_positive"),
         CheckConstraint("min_order >= 0", name="min_order_positive"),
         CheckConstraint("prep_minutes BETWEEN 0 AND 240", name="prep_minutes_range"),
+        Index("ix_stores_name_trgm", "name", postgresql_using="gin", postgresql_ops={"name": "gin_trgm_ops"}),
     )
 
     owner_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="RESTRICT"), unique=True)
@@ -70,8 +72,12 @@ class Store(UUIDPk, Timestamps, Base):
     pickup_place_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("campus_places.id", ondelete="SET NULL"))
     pickup_notes: Mapped[str] = mapped_column(String(200), default="")
     accepts_cash: Mapped[bool] = mapped_column(Boolean, default=True)
-    accepts_nequi: Mapped[bool] = mapped_column(Boolean, default=True)
+    accepts_nequi: Mapped[bool] = mapped_column(Boolean, default=False)
     accepts_card: Mapped[bool] = mapped_column(Boolean, default=False)
+    accepts_breb: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Datos para que el cliente transfiera directo al emprendedor (sin comisión)
+    nequi_phone: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    breb_key: Mapped[str] = mapped_column(String(60), default="", server_default="")
     phone: Mapped[str] = mapped_column(String(20), default="")
 
     # Calificación agregada (se recalcula con cada reseña)

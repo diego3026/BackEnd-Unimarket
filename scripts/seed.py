@@ -172,7 +172,10 @@ def seed_demo(db) -> None:
                 menu_sections=sections,
                 status=StoreStatus.approved,
                 phone="3000000000",
-                accepts_card=True,
+                accepts_nequi=True,
+                nequi_phone="3000000000",
+                accepts_breb=True,
+                breb_key="@" + name.lower().replace(" ", "")[:20],
             )
             db.add(store)
             db.flush()

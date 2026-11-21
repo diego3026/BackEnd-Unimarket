@@ -21,6 +21,7 @@ from app.schemas.admin import (
 )
 from app.schemas.common import Page, PageParams
 from app.services import mappers
+from app.services.media import private_download_url
 from app.services.notifications import notify
 from app.services.pricing import now
 
@@ -136,6 +137,14 @@ class AdminService:
         self._audit("document.status", "document", doc.id, data.status.value)
         self.db.commit()
         return mappers.document_out(doc)
+
+    def document_file_url(self, document_id: uuid.UUID) -> str:
+        doc = self.db.get(StoreDocument, document_id)
+        if not doc:
+            raise NotFound("Documento no encontrado", code="document_not_found")
+        self._audit("document.view", "document", doc.id)
+        self.db.commit()
+        return private_download_url(doc.file_url)
 
     # -------------------------------------------------------------- productos
     def list_products(self, *, q: str | None, hidden: bool | None, page: PageParams) -> Page:

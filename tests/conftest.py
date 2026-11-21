@@ -37,7 +37,11 @@ def _schema():
 
 @pytest.fixture(autouse=True)
 def _clean():
+    from app.core.middleware import micro_cache
+
+    micro_cache.clear()
     yield
+    micro_cache.clear()
     tables = [t.name for t in reversed(Base.metadata.sorted_tables) if t.name != "campus_places"]
     with engine.begin() as conn:
         conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
@@ -92,7 +96,8 @@ def seller(client, admin_headers):
             "category": "Comida",
             "pickupPlaceId": "b8",
             "deliveryFee": 2000,
-            "acceptsCard": True,
+            "acceptsBreb": True,
+            "brebKey": "@ottosandwich",
         },
     )
     assert r.status_code == 201, r.text

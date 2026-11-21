@@ -71,6 +71,12 @@ def review_document(document_id: uuid.UUID, data: DocumentReviewIn, admin: Admin
     return AdminService(db, admin).review_document(document_id, data)
 
 
+@router.get("/documents/{document_id}/file")
+def document_file(document_id: uuid.UUID, admin: Admin, db: DB):
+    """Enlace temporal (5 min) para ver un documento privado. Queda en la bitácora."""
+    return {"url": AdminService(db, admin).document_file_url(document_id), "expiresIn": 300}
+
+
 @router.get("/products", response_model=Page[ProductAdminOut])
 def products(
     admin: Admin,

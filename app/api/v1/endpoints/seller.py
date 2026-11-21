@@ -10,7 +10,7 @@ from fastapi import APIRouter, Query, Response, status
 from app.api.deps import DB, CurrentUser, Paging, Seller
 from app.models.enums import OrderStatus
 from app.schemas.common import Page
-from app.schemas.order import OrderOut, OrderStatusIn, ReviewOut, ReviewReplyIn
+from app.schemas.order import OrderOut, OrderStatusIn, PaymentConfirmIn, ReviewOut, ReviewReplyIn
 from app.schemas.product import (
     ProductAdminOut,
     ProductIn,
@@ -148,6 +148,12 @@ def store_orders(
 def change_status(order_id: int, data: OrderStatusIn, user: Seller, db: DB):
     """Avanza el pedido al siguiente estado (o lo rechaza con `cancelled`)."""
     return OrderService(db).change_status(user, order_id, data)
+
+
+@router.post("/orders/{order_id}/payment-confirm", response_model=OrderOut)
+def confirm_payment(order_id: int, data: PaymentConfirmIn, user: Seller, db: DB):
+    """Confirma si la transferencia llegó (`received: true`) o no."""
+    return OrderService(db).confirm_payment(user, order_id, data.received)
 
 
 @router.post("/orders/{order_id}/review-reply", response_model=ReviewOut)

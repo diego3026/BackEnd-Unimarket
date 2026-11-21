@@ -53,7 +53,7 @@ class RefreshToken(UUIDPk, Base):
 
 
 class OneTimeToken(UUIDPk, Base):
-    """Tokens de verificación de correo y recuperación de contraseña."""
+    """Códigos de 6 dígitos para verificar el correo y recuperar la contraseña."""
 
     __tablename__ = "one_time_tokens"
 
@@ -62,4 +62,5 @@ class OneTimeToken(UUIDPk, Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
