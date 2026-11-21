@@ -1,0 +1,92 @@
+"""Panel del administrador."""
+
+from __future__ import annotations
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+
+from app.api.deps import DB, Admin, Paging
+from app.models.enums import StoreStatus, UserRole, UserStatus
+from app.schemas.admin import (
+    AdminUserOut,
+    AdminUserUpdateIn,
+    DocumentReviewIn,
+    ProductModerationIn,
+    ReportOut,
+    StoreReviewIn,
+)
+from app.schemas.auth import UserOut
+from app.schemas.common import Page
+from app.schemas.product import ProductAdminOut
+from app.schemas.store import StoreAdminOut, StoreDocumentOut
+from app.services.admin import AdminService
+
+router = APIRouter(prefix="/admin", tags=["Administrador"])
+
+
+@router.get("/users", response_model=Page[AdminUserOut])
+def users(
+    admin: Admin,
+    db: DB,
+    paging: Paging,
+    q: Annotated[str | None, Query(max_length=60)] = None,
+    role: UserRole | None = None,
+    status: UserStatus | None = None,
+):
+    return AdminService(db, admin).list_users(q=q, role=role, status=status, page=paging)
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(user_id: uuid.UUID, data: AdminUserUpdateIn, admin: Admin, db: DB):
+    """Cambia rol o suspende/reactiva (suspender cierra todas sus sesiones)."""
+    return AdminService(db, admin).update_user(user_id, data)
+
+
+@router.get("/stores", response_model=Page[StoreAdminOut])
+def stores(
+    admin: Admin,
+    db: DB,
+    paging: Paging,
+    status: StoreStatus | None = None,
+    q: Annotated[str | None, Query(max_length=60)] = None,
+):
+    return AdminService(db, admin).list_stores(status=status, q=q, page=paging)
+
+
+@router.post("/stores/{store_id}/review", response_model=StoreAdminOut)
+def review_store(store_id: uuid.UUID, data: StoreReviewIn, admin: Admin, db: DB):
+    """Aprueba, rechaza o suspende una tienda."""
+    return AdminService(db, admin).review_store(store_id, data)
+
+
+@router.get("/stores/{store_id}/documents", response_model=list[StoreDocumentOut])
+def store_documents(store_id: uuid.UUID, admin: Admin, db: DB):
+    return AdminService(db, admin).store_documents(store_id)
+
+
+@router.post("/documents/{document_id}/review", response_model=StoreDocumentOut)
+def review_document(document_id: uuid.UUID, data: DocumentReviewIn, admin: Admin, db: DB):
+    return AdminService(db, admin).review_document(document_id, data)
+
+
+@router.get("/products", response_model=Page[ProductAdminOut])
+def products(
+    admin: Admin,
+    db: DB,
+    paging: Paging,
+    q: Annotated[str | None, Query(max_length=60)] = None,
+    hidden: bool | None = None,
+):
+    return AdminService(db, admin).list_products(q=q, hidden=hidden, page=paging)
+
+
+@router.post("/products/{product_id}/moderate", response_model=ProductAdminOut)
+def moderate(product_id: uuid.UUID, data: ProductModerationIn, admin: Admin, db: DB):
+    return AdminService(db, admin).moderate_product(product_id, data.is_hidden)
+
+
+@router.get("/reports", response_model=ReportOut)
+def reports(admin: Admin, db: DB, days: Annotated[int, Query(ge=1, le=365)] = 30):
+    return AdminService(db, admin).report(days)
