@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +33,7 @@ from app.schemas.order import (
 )
 from app.services import mappers
 from app.services.catalog import CatalogService
+from app.services.integrity import check_cancel_rate, notify_admins
 from app.services.notifications import notify
 from app.services.pricing import coupon_discount, discounted_prices, now
 
@@ -312,6 +314,8 @@ class OrderService:
             raise BusinessRuleError("El código de recogida no coincide", code="invalid_pickup_code")
         order.status = data.status
         order.history = {**(order.history or {}), data.status.value: now().isoformat()}
+        if data.status == OrderStatus.delivered:
+            order.delivered_at = now()
         if data.status == OrderStatus.delivered and order.payment_kind == PaymentKind.cash:
             order.payment_status = PaymentStatus.paid
             order.payment_confirmed_at = now()
@@ -344,14 +348,42 @@ class OrderService:
             promo = self.promos.get_for_update(order.promotion_id)
             if promo and promo.uses > 0:
                 promo.uses -= 1
+        paid = order.payment_status in (PaymentStatus.reported, PaymentStatus.paid, PaymentStatus.authorized)
         order.status = OrderStatus.cancelled
         order.cancel_reason = reason
+        order.cancelled_at = now()
+        order.cancelled_by = by
         order.history = {**(order.history or {}), OrderStatus.cancelled.value: now().isoformat()}
-        if order.payment_status in (PaymentStatus.paid, PaymentStatus.authorized):
-            order.payment_status = PaymentStatus.refunded
         if by == "seller":
-            self._notify_customer(order)
+            if paid:
+                # El dinero ya se transfirió (o eso reportó el cliente): la tienda debe
+                # devolverlo y el pedido queda para revisión del admin.
+                order.paid_cancelled = True
+                order.dispute_status = "open"
+                notify_admins(
+                    self.db,
+                    f"Pedido #{order.id} cancelado con pago",
+                    f"{order.store.name} canceló un pedido con el pago "
+                    f"{'confirmado' if order.payment_status == PaymentStatus.paid else 'reportado'}. "
+                    f"Motivo: {reason}",
+                    {"orderId": order.id, "storeId": str(order.store_id)},
+                )
+            notify(
+                self.db,
+                order.customer_id,
+                type_="order",
+                title=f"{order.store.name} canceló tu pedido #{order.id}",
+                body=(
+                    f"Motivo: {reason} "
+                    + ("La tienda debe devolverte el dinero. " if paid else "")
+                    + "¿Recibiste el pedido de todas formas? Cuéntanos en el detalle del pedido."
+                ),
+                data={"orderId": order.id, "status": "cancelled", "askReceived": True},
+            )
+            check_cancel_rate(self.db, order.store)
         else:
+            if order.payment_status in (PaymentStatus.paid, PaymentStatus.authorized):
+                order.payment_status = PaymentStatus.refunded
             self.catalog.notify_store_owner(order.store, f"Pedido #{order.id} cancelado", reason, {"orderId": order.id})
         self.db.commit()
         return mappers.order_out(self.orders.detail(order.id), viewer=by)
@@ -368,6 +400,40 @@ class OrderService:
             ),
             data={"orderId": order.id, "status": order.status.value},
         )
+
+    def cancel_feedback(self, user: User, order_id: int, received: bool):
+        """El cliente dice si recibió un pedido que la tienda canceló.
+
+        Si dice que sí, se abre una disputa y el pedido cuenta como venta para la
+        comisión mientras el admin no la descarte.
+        """
+        order = self.orders.detail(order_id, lock=True)
+        if self._viewer(user, order) != "customer":
+            raise Forbidden("Solo quien hizo el pedido puede responder")
+        if order.status != OrderStatus.cancelled or order.cancelled_by != "seller":
+            raise BusinessRuleError("Este pedido no fue cancelado por la tienda", code="not_cancelled_by_store")
+        if order.customer_confirmation:
+            raise BusinessRuleError("Ya respondiste sobre este pedido", code="already_answered")
+        if order.cancelled_at and now() - order.cancelled_at > timedelta(days=settings.cancel_feedback_days):
+            raise BusinessRuleError("Ya pasó el plazo para responder", code="feedback_expired")
+        order.customer_confirmation = "received" if received else "not_received"
+        if received:
+            order.dispute_status = "open"
+            notify_admins(
+                self.db,
+                f"Disputa en el pedido #{order.id}",
+                f"{order.store.name} canceló el pedido, pero el cliente dice que sí lo recibió.",
+                {"orderId": order.id, "storeId": str(order.store_id)},
+            )
+            self.catalog.notify_store_owner(
+                order.store,
+                f"Revisión del pedido #{order.id}",
+                "El cliente indicó que sí recibió el pedido que cancelaste. "
+                "Cuenta como venta mientras el equipo de UniMarket lo revisa.",
+                {"orderId": order.id},
+            )
+        self.db.commit()
+        return mappers.order_out(self.orders.detail(order.id), viewer="customer")
 
     # ------------------------------------------------------- transferencias
     def report_payment(self, user: User, order_id: int, reference: str):

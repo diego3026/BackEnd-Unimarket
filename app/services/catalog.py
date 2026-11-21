@@ -102,6 +102,8 @@ class CatalogService:
         fields = data.model_dump(exclude_none=True)
         store = Store(owner_id=user.id, **fields)
         store.status = StoreStatus.approved if settings.auto_approve_stores else StoreStatus.pending
+        if store.status == StoreStatus.approved:
+            store.approved_at = now()
         user.role = UserRole.entrepreneur
         try:
             self.stores.add(store)

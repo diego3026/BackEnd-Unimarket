@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -70,6 +71,17 @@ class Order(Timestamps, Base):
     # Fecha de cada cambio de estado: {"pending": "...", "preparing": "..."}
     history: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     cancel_reason: Mapped[str] = mapped_column(String(200), default="")
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # customer | seller
+    cancelled_by: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    # La tienda canceló con el pago ya reportado o confirmado: debe devolver el dinero
+    paid_cancelled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Respuesta del cliente cuando la tienda cancela: received | not_received
+    customer_confirmation: Mapped[str] = mapped_column(String(15), default="", server_default="")
+    # Revisión del admin: open | confirmed (cuenta como venta) | dismissed
+    dispute_status: Mapped[str] = mapped_column(String(12), default="", server_default="", index=True)
+    dispute_note: Mapped[str] = mapped_column(String(300), default="", server_default="")
     idempotency_key: Mapped[str | None] = mapped_column(String(80))
 
     lines: Mapped[list[OrderLine]] = relationship(

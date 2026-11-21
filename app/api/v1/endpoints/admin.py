@@ -12,16 +12,21 @@ from app.models.enums import StoreStatus, UserRole, UserStatus
 from app.schemas.admin import (
     AdminUserOut,
     AdminUserUpdateIn,
+    CommissionStatementOut,
     DocumentReviewIn,
     ProductModerationIn,
     ReportOut,
     StoreReviewIn,
+    StoreRiskOut,
 )
 from app.schemas.auth import UserOut
 from app.schemas.common import Page
+from app.schemas.order import DisputeDecisionIn, OrderOut
 from app.schemas.product import ProductAdminOut
 from app.schemas.store import PlaceAdminOut, PlaceIn, PlaceUpdateIn, StoreAdminOut, StoreDocumentOut
 from app.services.admin import AdminService, PlacesAdmin
+from app.services.commissions import all_statements, statement, store_by_id
+from app.services.integrity import store_metrics
 
 router = APIRouter(prefix="/admin", tags=["Administrador"])
 
@@ -120,3 +125,36 @@ def update_place(place_id: str, data: PlaceUpdateIn, admin: Admin, db: DB):
 def delete_place(place_id: str, admin: Admin, db: DB):
     """Desactiva el pin (los pedidos antiguos lo siguen mostrando)."""
     PlacesAdmin(db, admin).delete(place_id)
+
+
+# ------------------------------------------------------------------ comisiones
+@router.get("/commissions", response_model=list[CommissionStatementOut])
+def commissions(admin: Admin, db: DB, month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None):
+    """Comisión del mes de cada tienda con ventas (sin el detalle por pedido)."""
+    return all_statements(db, month)
+
+
+@router.get("/commissions/{store_id}", response_model=CommissionStatementOut)
+def store_commission(
+    store_id: uuid.UUID, admin: Admin, db: DB, month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None
+):
+    return statement(db, store_by_id(db, store_id), month)
+
+
+# ------------------------------------------------------- cancelaciones y disputas
+@router.get("/stores-risk", response_model=list[StoreRiskOut])
+def stores_risk(admin: Admin, db: DB, days: Annotated[int, Query(ge=1, le=365)] = 30):
+    """Cancelaciones por tienda; `alert` marca las que hay que revisar."""
+    return store_metrics(db, days=days)
+
+
+@router.get("/disputes", response_model=list[OrderOut])
+def disputes(admin: Admin, db: DB):
+    """Pedidos cancelados en revisión (el cliente dice que sí los recibió o tenían pago)."""
+    return AdminService(db, admin).open_disputes()
+
+
+@router.post("/orders/{order_id}/dispute", response_model=OrderOut)
+def resolve_dispute(order_id: int, data: DisputeDecisionIn, admin: Admin, db: DB):
+    """confirmed: cuenta como venta (paga comisión). dismissed: se descarta."""
+    return AdminService(db, admin).resolve_dispute(order_id, data)

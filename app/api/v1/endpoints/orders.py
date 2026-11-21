@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, status
 from app.api.deps import DB, CurrentUser, Paging
 from app.schemas.common import Page
 from app.schemas.order import (
+    CancelFeedbackIn,
     CheckoutQuoteOut,
     OrderCancelIn,
     OrderCreateIn,
@@ -60,6 +61,12 @@ def get_order(order_id: int, user: CurrentUser, db: DB):
 @router.post("/{order_id}/cancel", response_model=OrderOut)
 def cancel_order(order_id: int, data: OrderCancelIn, user: CurrentUser, db: DB):
     return OrderService(db).cancel_by_customer(user, order_id, data.reason)
+
+
+@router.post("/{order_id}/cancel-feedback", response_model=OrderOut)
+def cancel_feedback(order_id: int, data: CancelFeedbackIn, user: CurrentUser, db: DB):
+    """Si la tienda canceló: el cliente dice si de todas formas recibió el pedido."""
+    return OrderService(db).cancel_feedback(user, order_id, data.received)
 
 
 @router.post("/{order_id}/payment-report", response_model=OrderOut)

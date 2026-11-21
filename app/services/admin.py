@@ -49,6 +49,43 @@ class AdminService:
             )
         )
 
+    # ---------------------------------------------------------------- disputas
+    def open_disputes(self):
+        rows = self.db.scalars(
+            select(Order).where(Order.dispute_status == "open").order_by(Order.cancelled_at.desc()).limit(200)
+        ).all()
+        from app.repositories.repos import OrderRepo
+
+        repo = OrderRepo(self.db)
+        return [mappers.order_out(repo.detail(o.id), viewer="admin") for o in rows]
+
+    def resolve_dispute(self, order_id: int, data):
+        order = self.db.get(Order, order_id)
+        if not order or not order.dispute_status:
+            raise NotFound("No hay una revisión abierta para ese pedido", code="dispute_not_found")
+        order.dispute_status = data.decision
+        order.dispute_note = data.note
+        self._audit("order.dispute", "order", order.id, f"{data.decision}: {data.note}")
+        store = self.db.get(Store, order.store_id)
+        if store:
+            msg = (
+                "El pedido cuenta como venta y paga comisión."
+                if data.decision == "confirmed"
+                else "La revisión se cerró a tu favor."
+            )
+            notify(
+                self.db,
+                store.owner_id,
+                type_="system",
+                title=f"Revisión del pedido #{order.id}",
+                body=msg + (f" {data.note}" if data.note else ""),
+                data={"orderId": order.id},
+            )
+        self.db.commit()
+        from app.repositories.repos import OrderRepo
+
+        return mappers.order_out(OrderRepo(self.db).detail(order.id), viewer="admin")
+
     # ---------------------------------------------------------------- usuarios
     def list_users(self, *, q, role, status, page: PageParams) -> Page:
         items, total = self.users.paginate(
@@ -118,6 +155,8 @@ class AdminService:
         self._audit("store.status", "store", store.id, f"{store.status.value} → {data.status.value}: {data.note}")
         store.status = data.status
         store.review_note = data.note
+        if data.status == StoreStatus.approved and not store.approved_at:
+            store.approved_at = now()  # desde aquí cuentan los días sin comisión
         messages = {
             StoreStatus.approved: ("¡Tu tienda fue aprobada!", "Ya apareces en UniMarket. Agrega tus productos."),
             StoreStatus.rejected: ("Tu tienda no fue aprobada", data.note or "Revisa los datos y vuelve a intentarlo."),

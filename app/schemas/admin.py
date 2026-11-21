@@ -54,3 +54,46 @@ class ReportOut(CamelModel):
     top_categories: list[dict]
     from_date: datetime
     to_date: datetime
+
+
+class CommissionLineOut(CamelModel):
+    order_id: int
+    date: datetime
+    amount: int
+    kind: str  # delivered | disputed
+    free: bool
+
+
+class CommissionStatementOut(CamelModel):
+    """Comisión de una tienda en un mes. Tasa marginal: hasta `tierLimit` paga `lowRate`."""
+
+    store_id: uuid.UUID
+    store_name: str
+    month: str
+    free_until: datetime | None
+    orders: int
+    disputed_orders: int
+    total_sales: int
+    free_sales: int
+    chargeable_sales: int
+    tier_limit: int
+    low_rate: float
+    high_rate: float
+    commission: int
+    lines: list[CommissionLineOut] = []
+
+
+class StoreRiskOut(CamelModel):
+    """Cancelaciones de una tienda en el periodo y si amerita revisión."""
+
+    store_id: uuid.UUID
+    store_name: str
+    orders: int
+    cancelled: int
+    cancelled_by_store: int
+    cancelled_after_accept: int
+    cancelled_with_payment: int
+    contradicted_by_customer: int
+    open_disputes: int
+    cancel_rate: float
+    alert: bool

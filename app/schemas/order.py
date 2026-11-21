@@ -99,6 +99,10 @@ class OrderOut(CamelModel):
     history: dict[str, str]
     next_status: OrderStatus | None = None
     cancel_reason: str
+    cancelled_by: str = ""
+    paid_cancelled: bool = False
+    customer_confirmation: str = ""
+    dispute_status: str = ""
     review: ReviewOut | None = None
     created_at: datetime
 
@@ -146,3 +150,16 @@ class CheckoutQuoteOut(CamelModel):
     delivery_fee: int
     total: int
     lines: list[OrderLineOut]
+
+
+class CancelFeedbackIn(InputModel):
+    """Respuesta del cliente cuando la tienda cancela: ¿recibiste el pedido?"""
+
+    received: bool
+
+
+class DisputeDecisionIn(InputModel):
+    """Decisión del admin: confirmed = cuenta como venta; dismissed = se descarta."""
+
+    decision: str = Field(pattern="^(confirmed|dismissed)$")
+    note: str = Field("", max_length=300)

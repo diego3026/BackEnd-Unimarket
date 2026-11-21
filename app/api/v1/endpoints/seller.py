@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Response, status
 
 from app.api.deps import DB, CurrentUser, Paging, Seller
 from app.models.enums import OrderStatus
+from app.schemas.admin import CommissionStatementOut
 from app.schemas.common import Page
 from app.schemas.order import OrderOut, OrderStatusIn, PaymentConfirmIn, ReviewOut, ReviewReplyIn
 from app.schemas.product import (
@@ -30,6 +31,7 @@ from app.schemas.store import (
 )
 from app.services import mappers
 from app.services.catalog import CatalogService
+from app.services.commissions import statement
 from app.services.orders import OrderService
 
 router = APIRouter(prefix="/seller", tags=["Emprendedor"])
@@ -79,6 +81,12 @@ def earnings(user: Seller, db: DB, days: Annotated[int, Query(ge=1, le=365)] = 3
 
 
 # ----------------------------------------------------------------- menú
+@router.get("/commissions", response_model=CommissionStatementOut)
+def commissions(user: Seller, db: DB, month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None):
+    """Comisión del mes (AAAA-MM; por defecto el actual), con el detalle por pedido."""
+    return statement(db, CatalogService(db).my_store(user), month)
+
+
 @router.get("/products", response_model=list[ProductAdminOut])
 def my_products(user: Seller, db: DB):
     return CatalogService(db).my_products(user)

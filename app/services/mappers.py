@@ -240,6 +240,10 @@ def order_out(o: Order, *, viewer: str) -> OrderOut:
         history=dict(o.history or {}),
         next_status=next_status(o) if viewer != "customer" else None,
         cancel_reason=o.cancel_reason,
+        cancelled_by=o.cancelled_by or "",
+        paid_cancelled=o.paid_cancelled,
+        customer_confirmation=o.customer_confirmation or "",
+        dispute_status=o.dispute_status or "",
         review=review_out(o.review) if o.review else None,
         created_at=o.created_at,
     )

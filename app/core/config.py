@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     # --- Negocio -----------------------------------------------------------
     # Si es True las tiendas nuevas quedan aprobadas sin revisión del admin.
     auto_approve_stores: bool = False
+
+    # Comisión de UniMarket sobre las ventas del mes (escalonada, marginal):
+    # los primeros COMMISSION_TIER_LIMIT pesos del mes pagan la tasa baja y el
+    # excedente la tasa normal. Las tiendas nuevas no pagan durante los primeros
+    # COMMISSION_FREE_DAYS días desde su aprobación.
+    commission_free_days: int = 60
+    commission_tier_limit: int = 500_000
+    commission_low_rate: float = 0.01
+    commission_high_rate: float = 0.02
+    # Alerta al admin si una tienda cancela más de este porcentaje de pedidos (30 días)
+    cancel_alert_rate: float = 0.15
+    cancel_alert_min_orders: int = 5
+    # Días que tiene el cliente para decir si recibió un pedido que la tienda canceló
+    cancel_feedback_days: int = 7
     # Expone los endpoints del proyecto de investigación (MOTOA/JROF) en /research.
     # No tienen autenticación: apagados por defecto, actívalos solo para demos.
     enable_research_api: bool = False

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -68,6 +70,8 @@ class Store(UUIDPk, Timestamps, Base):
     menu_sections: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[StoreStatus] = mapped_column(_enum(StoreStatus), default=StoreStatus.pending, index=True)
     review_note: Mapped[str] = mapped_column(String(300), default="")
+    # Primera aprobación: desde aquí cuentan los días sin comisión
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Configuración de pedidos
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
